@@ -1,0 +1,12 @@
+FROM node:20
+
+WORKDIR /usr/src/app
+
+COPY server.js .
+COPY package*.json ./
+RUN npm install
+
+ARG PORT=3000
+EXPOSE $PORT
+
+CMD ["node", "server.js"]
