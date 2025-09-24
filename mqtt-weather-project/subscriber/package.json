@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "description": "",
+  "main": "mqtt-client.js",
+  "type": "module",
+  "scripts": {
+    "start": "node mqtt-client.js",
+    "dashboard": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "mqtt": "^5.14.1",
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2"
+  }
+}

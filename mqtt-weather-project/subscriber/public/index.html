@@ -1,0 +1,187 @@
+<!-- Generated with AI-->
+
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MQTT Wetter Dashboard (D3.js) - 3 Stationen</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 20px; }
+    h1 { margin-bottom: 10px }
+    .station { margin-bottom: 30px; padding: 8px; border: 1px solid #eee; border-radius:6px }
+    .line { fill: none; stroke-width: 2px; }
+    .axis path, .axis line { stroke: #888; }
+    .meta { font-size: 12px; color: #555; margin-top:6px }
+  </style>
+</head>
+<body>
+  <h1>Live Wetterdaten (D3.js) — je Station</h1>
+  <div id="status">Verbindung: <span id="conn">--</span></div>
+  <div id="stations"></div>
+
+  <script>
+    const socket = io();
+    const maxPoints = 60;
+    const displayPoints = 8;
+
+    const baseWidth = 800;
+    const baseHeight = 200;
+    const margin = { top: 20, right: 30, bottom: 30, left: 50 };
+
+    const stationIds = ['WS-01','WS-02','WS-03'];
+
+    const stations = {};
+
+    function createStationPanels() {
+      const container = document.getElementById('stations');
+      stationIds.forEach(id => {
+        stations[id] = { temp: [], hum: [], lastTs: null };
+
+        const panel = document.createElement('div');
+        panel.className = 'station';
+        panel.id = `panel-${id}`;
+        panel.innerHTML = `
+          <h2>${id} <small id="${id}-last" style="margin-left:12px">letzte: --</small></h2>
+          <div class="meta">Temperatur</div>
+          <div id="${id}-temp"></div>
+          <div class="meta">Luftfeuchtigkeit</div>
+          <div id="${id}-hum"></div>
+        `;
+        container.appendChild(panel);
+
+        d3.select(`#${id}-temp`).append('svg')
+          .attr('viewBox', `0 0 ${baseWidth} ${baseHeight}`)
+          .attr('preserveAspectRatio', 'xMidYMid meet')
+          .style('width', '100%')
+          .style('height', 'auto');
+
+        d3.select(`#${id}-hum`).append('svg')
+          .attr('viewBox', `0 0 ${baseWidth} ${baseHeight}`)
+          .attr('preserveAspectRatio', 'xMidYMid meet')
+          .style('width', '100%')
+          .style('height', 'auto');
+
+        render(d3.select(`#${id}-temp svg`), [], 'crimson', 'Temperatur', '°C');
+        render(d3.select(`#${id}-hum svg`), [], 'steelblue', 'Luftfeuchtigkeit', '%');
+      });
+    }
+
+    function render(svg, data, color, title, unit) {
+      svg.selectAll('*').remove();
+
+      if (!data || data.length === 0) {
+        svg.append('text').attr('x', 10).attr('y', 20).text('Keine Daten');
+        svg.append('text').attr('x', 10).attr('y', 36).style('font-size','12px').text(title);
+        return;
+      }
+
+      const svgNode = svg.node();
+      let actualWidth = baseWidth;
+      try {
+        const parent = svgNode.parentNode;
+        const rect = parent.getBoundingClientRect();
+        if (rect && rect.width > 0) actualWidth = rect.width;
+      } catch (e) {}
+
+      data.forEach((d, i) => { d._date = new Date(d.timestamp); d._index = i; });
+
+      const extent = d3.extent(data, d => d._date);
+      if (extent[0] && extent[1] && extent[0].getTime() === extent[1].getTime()) {
+        data.forEach((d, i) => { d._date = new Date(d._date.getTime() + i * 1000); });
+      }
+
+      const x = d3.scaleTime()
+        .domain(d3.extent(data, d => d._date))
+        .range([margin.left, actualWidth - margin.right]);
+
+      const y = d3.scaleLinear()
+        .domain([ (d3.min(data, d => d && d.value) ?? 0) - 5, (d3.max(data, d => d && d.value) ?? 100) + 5 ])
+        .nice()
+        .range([baseHeight - margin.bottom, margin.top]);
+
+      const tickDates = data.map(d => d._date);
+      const uniqueTickDates = Array.from(new Set(tickDates.map(d => d.getTime()))).map(t => new Date(t));
+      const xAxis = d3.axisBottom(x).tickValues(uniqueTickDates).tickFormat(d3.timeFormat('%H:%M:%S'));
+
+      const yAxis = d3.axisLeft(y).ticks(4);
+
+      svg.append('g')
+        .attr('transform', `translate(0,${baseHeight - margin.bottom})`)
+        .call(xAxis)
+        .selectAll('text')
+        .style('font-size', '11px')
+        .attr('transform', 'rotate(0)');
+
+      svg.append('g')
+        .attr('transform', `translate(${margin.left},0)`)
+        .call(yAxis);
+
+      const line = d3.line()
+        .x(d => x(d._date))
+        .y(d => y(d.value));
+
+      svg.append('path')
+        .datum(data)
+        .attr('class', 'line')
+        .attr('stroke', color)
+        .attr('d', line);
+
+      svg.selectAll('circle')
+        .data(data)
+        .enter()
+        .append('circle')
+        .attr('cx', d => x(d._date))
+        .attr('cy', d => y(d.value))
+        .attr('r', 3)
+        .attr('fill', color);
+
+      svg.append('text')
+        .attr('x', (margin.left + (actualWidth - margin.right)) / 2)
+        .attr('y', margin.top)
+        .attr('text-anchor', 'middle')
+        .text(`${title} (${unit})`)
+        .style('font-size', '14px');
+    }
+
+    function updateStation(id) {
+      const s = stations[id];
+      if (!s) return;
+      const tempView = s.temp.slice(-displayPoints);
+      const humView = s.hum.slice(-displayPoints);
+      render(d3.select(`#${id}-temp svg`), tempView, 'crimson', 'Temperatur', '°C');
+      render(d3.select(`#${id}-hum svg`), humView, 'steelblue', 'Luftfeuchtigkeit', '%');
+      document.getElementById(`${id}-last`).textContent = `letzte: ${s.lastTs || '--'}`;
+    }
+
+    socket.on('connect', () => document.getElementById('conn').textContent = 'verbunden');
+    socket.on('disconnect', () => document.getElementById('conn').textContent = 'getrennt');
+
+    socket.on('weather', data => {
+      if (!data || !data.stationId) return;
+      const id = data.stationId;
+      if (!stations[id]) return;
+
+      const t = (typeof data.temperature === 'number') ? data.temperature : null;
+      const h = (typeof data.humidity === 'number') ? data.humidity : null;
+      const ts = data.timestamp || new Date().toISOString();
+
+      if (t !== null) {
+        stations[id].temp.push({ value: t, timestamp: ts });
+        if (stations[id].temp.length > maxPoints) stations[id].temp.shift();
+      }
+      if (h !== null) {
+        stations[id].hum.push({ value: h, timestamp: ts });
+        if (stations[id].hum.length > maxPoints) stations[id].hum.shift();
+      }
+      stations[id].lastTs = ts;
+
+      updateStation(id);
+    });
+
+    createStationPanels();
+  </script>
+</body>
+</html>
